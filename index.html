@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>MOE Vendor Certificates</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color-scheme: light dark;
+    }
+
+    body {
+      margin: 0;
+      padding: 0;
+      background: #f3f4f6;
+    }
+
+    .page {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 24px 16px 40px;
+    }
+
+    .card {
+      background: #ffffff;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+      padding: 20px 24px;
+    }
+
+    .header {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .header-left h1 {
+      margin: 0;
+      font-size: 20px;
+    }
+
+    .header-left p {
+      margin: 4px 0 0;
+      font-size: 13px;
+      color: #6b7280;
+    }
+
+    .btn {
+      border-radius: 999px;
+      border: none;
+      padding: 8px 16px;
+      font-size: 14px;
+      cursor: pointer;
+      background: #2563eb;
+      color: white;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .btn:disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
+
+    .status {
+      font-size: 13px;
+      color: #6b7280;
+      margin-top: 8px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 16px;
+      font-size: 13px;
+    }
+
+    th, td {
+      padding: 10px 8px;
+      text-align: left;
+      border-bottom: 1px solid #e5e7eb;
+      vertical-align: middle;
+    }
+
+    th {
+      font-weight: 600;
+      background: #f9fafb;
+      color: #4b5563;
+    }
+
+    tr:hover td {
+      background: #f3f4f6;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #e5f2ff;
+      color: #1d4ed8;
+      font-size: 11px;
+    }
+
+    .download-link {
+      text-decoration: none;
+      font-size: 13px;
+      color: #2563eb;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .download-link svg {
+      width: 14px;
+      height: 14px;
+    }
+
+    .center {
+      text-align: center;
+      padding: 24px 0;
+      color: #6b7280;
+      font-size: 14px;
+    }
+
+    @media (max-width: 720px) {
+      .header {
+        align-items: flex-start;
+      }
+
+      table {
+        font-size: 12px;
+      }
+
+      th:nth-child(3),
+      td:nth-child(3),
+      th:nth-child(4),
+      td:nth-child(4) {
+        display: none; /* hide size & date on small screens for simplicity */
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="card">
+      <div class="header">
+        <div class="header-left">
+          <h1>MOE Vendor Certificates</h1>
+          <p>Container: <span class="badge">moevendorcertificates</span></p>
+        </div>
+        <div class="header-right">
+          <button id="refreshBtn" class="btn">
+            &#x21bb; Refresh list
+          </button>
+          <div id="status" class="status"></div>
+        </div>
+      </div>
+
+      <div id="tableContainer">
+        <div class="center">Loading files…</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // === CONFIGURATION (specific to your storage account) ===
+    const accountName = "saproduaenorthmoe";
+    const containerName = "moevendorcertificates";
+
+    // Your container SAS (from Blob SAS URL, query part only – without the leading '?')
+    const sasToken = "sp=rl&st=2025-11-23T17:48:02Z&se=2026-11-24T02:03:02Z&spr=https&sv=2024-11-04&sr=c&sig=Bw6QcAJQlINtGWxJYbufYTVcvPvbqazkj0ijCurcZik%3D";
+
+    const baseUrl = `https://${accountName}.blob.core.windows.net/${containerName}`;
+    const statusEl = document.getElementById("status");
+    const refreshBtn = document.getElementById("refreshBtn");
+    const tableContainer = document.getElementById("tableContainer");
+
+    function setStatus(message, isError = false) {
+      statusEl.textContent = message || "";
+      statusEl.style.color = isError ? "#b91c1c" : "#6b7280";
+    }
+
+    function formatSize(bytesStr) {
+      const bytes = parseInt(bytesStr, 10);
+      if (isNaN(bytes)) return "";
+      if (bytes < 1024) return bytes + " B";
+      const kb = bytes / 1024;
+      if (kb < 1024) return kb.toFixed(1) + " KB";
+      const mb = kb / 1024;
+      if (mb < 1024) return mb.toFixed(1) + " MB";
+      const gb = mb / 1024;
+      return gb.toFixed(1) + " GB";
+    }
+
+    function formatDate(dateStr) {
+      if (!dateStr) return "";
+      const d = new Date(dateStr);
+      if (isNaN(d.getTime())) return dateStr;
+      return d.toLocaleString();
+    }
+
+    // Encode blob name but preserve "/" as path separator
+    function encodeBlobName(name) {
+      return name
+        .split("/")
+        .map(encodeURIComponent)
+        .join("/");
+    }
+
+    async function listBlobs() {
+      setStatus("Loading files…");
+      refreshBtn.disabled = true;
+      tableContainer.innerHTML = '<div class="center">Loading files…</div>';
+
+      try {
+        let blobs = [];
+        let marker = "";
+
+        // Handle pagination if there are many blobs
+        do {
+          const listUrl =
+            `${baseUrl}?restype=container&comp=list&${sasToken}` +
+            (marker ? `&marker=${encodeURIComponent(marker)}` : "");
+
+          const resp = await fetch(listUrl, {
+            method: "GET",
+            headers: {
+              "x-ms-version": "2024-11-04",
+              "x-ms-date": new Date().toUTCString()
+            }
+          });
+
+          if (!resp.ok) {
+            const text = await resp.text();
+            console.error("List error response:", text);
+            throw new Error(`Failed to list blobs (HTTP ${resp.status}).`);
+          }
+
+          const xmlText = await resp.text();
+          const parser = new DOMParser();
+          const xml = parser.parseFromString(xmlText, "application/xml");
+
+          const blobNodes = xml.getElementsByTagName("Blob");
+          for (let i = 0; i < blobNodes.length; i++) {
+            const node = blobNodes[i];
+            const name = node.getElementsByTagName("Name")[0]?.textContent || "";
+            const props = node.getElementsByTagName("Properties")[0];
+            const size = props?.getElementsByTagName("Content-Length")[0]?.textContent || "";
+            const lastModified = props?.getElementsByTagName("Last-Modified")[0]?.textContent || "";
+
+            blobs.push({ name, size, lastModified });
+          }
+
+          const nextMarkerNode = xml.getElementsByTagName("NextMarker")[0];
+          marker = nextMarkerNode && nextMarkerNode.textContent ? nextMarkerNode.textContent : "";
+        } while (marker);
+
+        if (!blobs.length) {
+          tableContainer.innerHTML = '<div class="center">No files found in this container.</div>';
+          setStatus("Loaded 0 files.");
+          return;
+        }
+
+        // Build table
+        const table = document.createElement("table");
+        const thead = document.createElement("thead");
+        const headerRow = document.createElement("tr");
+        ["File name", "Size", "Last modified", "Download"].forEach((h) => {
+          const th = document.createElement("th");
+          th.textContent = h;
+          headerRow.appendChild(th);
+        });
+        thead.appendChild(headerRow);
+        table.appendChild(thead);
+
+        const tbody = document.createElement("tbody");
+
+        blobs.forEach((blob) => {
+          const tr = document.createElement("tr");
+
+          const nameTd = document.createElement("td");
+          nameTd.textContent = blob.name;
+          tr.appendChild(nameTd);
+
+          const sizeTd = document.createElement("td");
+          sizeTd.textContent = formatSize(blob.size);
+          tr.appendChild(sizeTd);
+
+          const dateTd = document.createElement("td");
+          dateTd.textContent = formatDate(blob.lastModified);
+          tr.appendChild(dateTd);
+
+          const downloadTd = document.createElement("td");
+          const link = document.createElement("a");
+          const encodedName = encodeBlobName(blob.name);
+          link.href = `${baseUrl}/${encodedName}?${sasToken}`;
+          link.className = "download-link";
+          link.setAttribute("target", "_blank");
+          link.setAttribute("rel", "noopener noreferrer");
+          link.innerHTML = `
+            <svg viewBox="0 0 20 20" aria-hidden="true">
+              <path d="M10 2a1 1 0 011 1v7.586l2.293-2.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4A1 1 0 116.707 8.293L9 10.586V3a1 1 0 011-1z"></path>
+              <path d="M4 14a1 1 0 011-1h10a1 1 0 110 2H5a1 1 0 01-1-1z"></path>
+            </svg>
+            Download
+          `;
+          downloadTd.appendChild(link);
+          tr.appendChild(downloadTd);
+
+          tbody.appendChild(tr);
+        });
+
+        table.appendChild(tbody);
+        tableContainer.innerHTML = "";
+        tableContainer.appendChild(table);
+
+        setStatus(`Loaded ${blobs.length} file(s).`);
+      } catch (err) {
+        console.error(err);
+        tableContainer.innerHTML =
+          '<div class="center">Error loading files. Please contact your administrator.</div>';
+        setStatus(err.message || "Error loading files.", true);
+      } finally {
+        refreshBtn.disabled = false;
+      }
+    }
+
+    refreshBtn.addEventListener("click", () => {
+      listBlobs();
+    });
+
+    // Initial load
+    listBlobs();
+  </script>
+</body>
+</html>
